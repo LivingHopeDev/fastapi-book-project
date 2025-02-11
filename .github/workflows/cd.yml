@@ -81,7 +81,6 @@ jobs:
 
             [Install]
             WantedBy=multi-user.target
-            EOL
 
             # Setup Nginx configuration
             sudo tee /etc/nginx/sites-available/fastapi << 'EOL'
@@ -95,7 +94,6 @@ jobs:
                     proxy_set_header X-Real-IP $remote_addr;
                 }
             }
-            EOL
 
             # Enable the Nginx configuration
             sudo ln -sf /etc/nginx/sites-available/fastapi /etc/nginx/sites-enabled/
