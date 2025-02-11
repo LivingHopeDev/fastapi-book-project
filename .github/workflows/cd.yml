@@ -27,12 +27,16 @@ jobs:
           mkdir -p ~/.ssh/
           echo "$SSH_PRIVATE_KEY" > ~/.ssh/key.pem
           chmod 600 ~/.ssh/key.pem
+
+          # Add EC2 host key to known_hosts to prevent manual prompt
+          ssh-keyscan -H $SERVER_HOST >> ~/.ssh/known_hosts
+
           cat >>~/.ssh/config <<END
           Host aws
-            HostName $SERVER_HOST
-            User $SERVER_USERNAME
-            IdentityFile ~/.ssh/key.pem
-            StrictHostKeyChecking no
+          HostName $SERVER_HOST
+          User $SERVER_USERNAME
+          IdentityFile ~/.ssh/key.pem
+          StrictHostKeyChecking no
           END
 
       - name: Deploy to EC2
