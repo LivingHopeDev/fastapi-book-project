@@ -39,27 +39,33 @@ jobs:
           StrictHostKeyChecking no
           END
 
+      - name: Copy application files
+        run: |
+          # Exclude unnecessary files (e.g., .git, .github, venv)
+          rsync -avz -e "ssh -i ~/.ssh/key.pem" \
+            --exclude .git \
+            --exclude .github \
+            --exclude venv \
+            --exclude __pycache__ \
+            ./ ${{ secrets.SERVER_USERNAME }}@${{ secrets.SERVER_HOST }}:~/fastapi-app/
+
       - name: Deploy to EC2
         run: |
-          # Copy application files
-          scp -r -i ~/.ssh/key.pem ./* ${{ secrets.SERVER_USERNAME }}@${{ secrets.SERVER_HOST }}:~/fastapi-app/
-
-          # Setup and deploy
-          ssh -i ~/.ssh/key.pem ${{ secrets.SERVER_USERNAME }}@${{ secrets.SERVER_HOST }} '
+          ssh -i ~/.ssh/key.pem ${{ secrets.SERVER_USERNAME }}@${{ secrets.SERVER_HOST }} << 'EOF'
             cd ~/fastapi-app
-            
+
             # Install Python and pip if not present
             sudo apt-get update
             sudo apt-get install -y python3-pip nginx
-            
+
             # Install dependencies
             pip3 install -r requirements.txt
-            
+
             # Install uvicorn if not in requirements
             pip3 install uvicorn
-            
+
             # Create a systemd service file for FastAPI
-            sudo tee /etc/systemd/system/fastapi.service << EOF
+            sudo tee /etc/systemd/system/fastapi.service << 'END'
             [Unit]
             Description=FastAPI application
             After=network.target
@@ -72,10 +78,10 @@ jobs:
 
             [Install]
             WantedBy=multi-user.target
-            EOF
-            
+            END
+
             # Setup Nginx configuration
-            sudo tee /etc/nginx/sites-available/fastapi << EOF
+            sudo tee /etc/nginx/sites-available/fastapi << 'END'
             server {
                 listen 80;
                 server_name ${{ secrets.SERVER_HOST }};
@@ -86,15 +92,15 @@ jobs:
                     proxy_set_header X-Real-IP \$remote_addr;
                 }
             }
-            EOF
-            
+            END
+
             # Enable the Nginx configuration
             sudo ln -sf /etc/nginx/sites-available/fastapi /etc/nginx/sites-enabled/
             sudo rm -f /etc/nginx/sites-enabled/default
-            
+
             # Start and enable services
             sudo systemctl daemon-reload
             sudo systemctl enable fastapi
             sudo systemctl restart fastapi
             sudo systemctl restart nginx
-          '
+          EOF
