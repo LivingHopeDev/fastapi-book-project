@@ -54,18 +54,21 @@ jobs:
           ssh -i ~/.ssh/key.pem ${{ secrets.SERVER_USERNAME }}@${{ secrets.SERVER_HOST }} << 'EOF'
             cd ~/fastapi-app
 
-            # Install Python and pip if not present
+            # Install necessary packages
             sudo apt-get update
-            sudo apt-get install -y python3-pip nginx
+            sudo apt-get install -y python3-venv python3-pip nginx
 
-            # Install dependencies
-            pip3 install -r requirements.txt
+            # Set up and activate virtual environment
+            python3 -m venv venv
+            source venv/bin/activate
 
-            # Install uvicorn if not in requirements
-            pip3 install uvicorn
+            # Upgrade pip and install dependencies
+            pip install --upgrade pip
+            pip install -r requirements.txt
+            pip install uvicorn
 
             # Create a systemd service file for FastAPI
-            sudo tee /etc/systemd/system/fastapi.service << '\''EOF'\''
+            sudo tee /etc/systemd/system/fastapi.service << 'EOL'
             [Unit]
             Description=FastAPI application
             After=network.target
@@ -73,32 +76,32 @@ jobs:
             [Service]
             User=${{ secrets.SERVER_USERNAME }}
             WorkingDirectory=/home/${{ secrets.SERVER_USERNAME }}/fastapi-app
-            ExecStart=/home/${{ secrets.SERVER_USERNAME }}/.local/bin/uvicorn main:app --host 0.0.0.0 --port 8000
+            ExecStart=/home/${{ secrets.SERVER_USERNAME }}/fastapi-app/venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000
             Restart=always
 
             [Install]
             WantedBy=multi-user.target
-            END
+            EOL
 
             # Setup Nginx configuration
-            sudo tee /etc/nginx/sites-available/fastapi << '\''EOF'\''
+            sudo tee /etc/nginx/sites-available/fastapi << 'EOL'
             server {
                 listen 80;
                 server_name ${{ secrets.SERVER_HOST }};
 
                 location / {
                     proxy_pass http://127.0.0.1:8000;
-                    proxy_set_header Host \$host;
-                    proxy_set_header X-Real-IP \$remote_addr;
+                    proxy_set_header Host $host;
+                    proxy_set_header X-Real-IP $remote_addr;
                 }
             }
-            END
+            EOL
 
             # Enable the Nginx configuration
             sudo ln -sf /etc/nginx/sites-available/fastapi /etc/nginx/sites-enabled/
             sudo rm -f /etc/nginx/sites-enabled/default
 
-            # Test nginx configuration
+            # Test Nginx configuration
             sudo nginx -t
 
             # Start and enable services
