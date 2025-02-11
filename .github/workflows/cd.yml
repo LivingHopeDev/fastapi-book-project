@@ -1,0 +1,95 @@
+name: CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: "3.10"
+
+      - name: Deploy to EC2
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.SSH_PRIVATE_KEY }}
+          SERVER_HOST: ${{ secrets.SERVER_HOST }}
+          SERVER_USERNAME: ${{ secrets.SERVER_USERNAME }}
+        run: |
+          # Set up SSH
+          mkdir -p ~/.ssh
+          echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan -H $SERVER_HOST >> ~/.ssh/known_hosts
+
+          # Deploy application
+          ssh -o StrictHostKeyChecking=no $SERVER_USERNAME@$SERVER_HOST '
+            # Create app directory if it doesn't exist
+            mkdir -p ~/fastapi-app
+          '
+
+          # Copy application files
+          scp -r ./* $SERVER_USERNAME@$SERVER_HOST:~/fastapi-app/
+
+          # Install dependencies and start application
+          ssh -o StrictHostKeyChecking=no $SERVER_USERNAME@$SERVER_HOST '
+            cd ~/fastapi-app
+            
+            # Install Python and pip if not present
+            sudo apt-get update
+            sudo apt-get install -y python3-pip nginx
+            
+            # Install dependencies
+            pip3 install -r requirements.txt
+            
+            # Install uvicorn if not in requirements
+            pip3 install uvicorn
+            
+            # Create a systemd service file for FastAPI
+            sudo tee /etc/systemd/system/fastapi.service << EOF
+            [Unit]
+            Description=FastAPI application
+            After=network.target
+
+            [Service]
+            User=$SERVER_USERNAME
+            WorkingDirectory=/home/$SERVER_USERNAME/fastapi-app
+            ExecStart=/home/$SERVER_USERNAME/.local/bin/uvicorn main:app --host 0.0.0.0 --port 8000
+            Restart=always
+
+            [Install]
+            WantedBy=multi-user.target
+            EOF
+            
+            # Setup Nginx configuration
+            sudo tee /etc/nginx/sites-available/fastapi << EOF
+            server {
+                listen 80;
+                server_name $SERVER_HOST;
+
+                location / {
+                    proxy_pass http://127.0.0.1:8000;
+                    proxy_set_header Host \$host;
+                    proxy_set_header X-Real-IP \$remote_addr;
+                }
+            }
+            EOF
+            
+            # Enable the Nginx configuration
+            sudo ln -sf /etc/nginx/sites-available/fastapi /etc/nginx/sites-enabled/
+            sudo rm -f /etc/nginx/sites-enabled/default
+            
+            # Start and enable services
+            sudo systemctl daemon-reload
+            sudo systemctl enable fastapi
+            sudo systemctl restart fastapi
+            sudo systemctl restart nginx
+          '
