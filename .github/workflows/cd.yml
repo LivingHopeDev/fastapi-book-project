@@ -65,7 +65,7 @@ jobs:
             pip3 install uvicorn
 
             # Create a systemd service file for FastAPI
-            sudo tee /etc/systemd/system/fastapi.service << 'END'
+            sudo tee /etc/systemd/system/fastapi.service << '\''EOF'\''
             [Unit]
             Description=FastAPI application
             After=network.target
@@ -81,7 +81,7 @@ jobs:
             END
 
             # Setup Nginx configuration
-            sudo tee /etc/nginx/sites-available/fastapi << 'END'
+            sudo tee /etc/nginx/sites-available/fastapi << '\''EOF'\''
             server {
                 listen 80;
                 server_name ${{ secrets.SERVER_HOST }};
@@ -98,9 +98,16 @@ jobs:
             sudo ln -sf /etc/nginx/sites-available/fastapi /etc/nginx/sites-enabled/
             sudo rm -f /etc/nginx/sites-enabled/default
 
+            # Test nginx configuration
+            sudo nginx -t
+
             # Start and enable services
             sudo systemctl daemon-reload
             sudo systemctl enable fastapi
             sudo systemctl restart fastapi
             sudo systemctl restart nginx
+
+            # Verify services are running
+            sudo systemctl status fastapi
+            sudo systemctl status nginx
           EOF
