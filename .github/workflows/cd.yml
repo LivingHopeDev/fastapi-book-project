@@ -8,7 +8,6 @@ on:
 jobs:
   deploy:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v3
@@ -28,7 +27,6 @@ jobs:
           echo "$SSH_PRIVATE_KEY" > ~/.ssh/key.pem
           chmod 600 ~/.ssh/key.pem
           ssh-keyscan -H $SERVER_HOST >> ~/.ssh/known_hosts
-
           cat >>~/.ssh/config <<END
           Host aws
             HostName $SERVER_HOST
@@ -42,73 +40,80 @@ jobs:
           rsync -avz -e "ssh -i ~/.ssh/key.pem" \
             --exclude .git \
             --exclude .github \
-            --exclude __pycache__ \
+            --exclude "**/__pycache__" \
+            --delete \
             ./ ${{ secrets.SERVER_USERNAME }}@${{ secrets.SERVER_HOST }}:~/fastapi-app/
 
       - name: Deploy FastAPI and Configure Nginx on EC2
         run: |
           ssh -i ~/.ssh/key.pem ${{ secrets.SERVER_USERNAME }}@${{ secrets.SERVER_HOST }} << 'EOF'
-            set -e  # Exit immediately on error
+          set -e # Exit immediately on error
 
-            # Update packages and install dependencies
-            sudo apt-get update
-            sudo apt-get install -y python3-venv nginx
+          # Update packages and install dependencies
+          sudo apt-get update
+          sudo apt-get install -y python3-venv nginx
 
-            # Navigate to the app directory
-            cd ~/fastapi-app
+          # Navigate to the app directory
+          cd ~/fastapi-app
 
-            # Set up virtual environment
-            python3 -m venv venv
-            source venv/bin/activate
+          # Clean up Python cache files
+          find . -type d -name "__pycache__" -exec rm -rf {} +
+          find . -type f -name "*.pyc" -delete
 
-            # Install Python dependencies
-            pip install --upgrade pip
-            pip install -r requirements.txt
-            pip install uvicorn
+          # Stop the FastAPI service before updating
+          sudo systemctl stop fastapi || true
 
-            # Create systemd service for FastAPI
-            sudo tee /etc/systemd/system/fastapi.service > /dev/null <<EOL
-            [Unit]
-            Description=FastAPI application
-            After=network.target
+          # Set up virtual environment
+          python3 -m venv venv
+          source venv/bin/activate
 
-            [Service]
-            User=${USER}
-            WorkingDirectory=/home/${USER}/fastapi-app
-            ExecStart=/home/${USER}/fastapi-app/venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000
-            Restart=always
+          # Install Python dependencies
+          pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install uvicorn
 
-            [Install]
-            WantedBy=multi-user.target
-            EOL
+          # Create systemd service for FastAPI
+          sudo tee /etc/systemd/system/fastapi.service > /dev/null <<EOL
+          [Unit]
+          Description=FastAPI application
+          After=network.target
 
-            # Reload systemd and start FastAPI service
-            sudo systemctl daemon-reload
-            sudo systemctl enable fastapi
-            sudo systemctl restart fastapi
+          [Service]
+          User=${USER}
+          WorkingDirectory=/home/${USER}/fastapi-app
+          ExecStart=/home/${USER}/fastapi-app/venv/bin/uvicorn main:app --host 0.0.0.0 --port 8000
+          Restart=always
 
-            # Create Nginx configuration
-            sudo tee /etc/nginx/sites-available/fastapi > /dev/null <<EOL
-            server {
-                listen 80;
-                server_name $SERVER_HOST;
+          [Install]
+          WantedBy=multi-user.target
+          EOL
 
-                location / {
-                    proxy_pass http://127.0.0.1:8000;
-                    proxy_set_header Host \$host;
-                    proxy_set_header X-Real-IP \$remote_addr;
-                }
-            }
-            EOL
+          # Create Nginx configuration
+          sudo tee /etc/nginx/sites-available/fastapi > /dev/null <<EOL
+          server {
+              listen 80;
+              server_name \$host;
+              location / {
+                  proxy_pass http://127.0.0.1:8000;
+                  proxy_set_header Host \$host;
+                  proxy_set_header X-Real-IP \$remote_addr;
+              }
+          }
+          EOL
 
-            # Enable Nginx configuration and restart
-            sudo ln -sf /etc/nginx/sites-available/fastapi /etc/nginx/sites-enabled/
-            sudo rm -f /etc/nginx/sites-enabled/default
+          # Enable Nginx configuration and restart
+          sudo ln -sf /etc/nginx/sites-available/fastapi /etc/nginx/sites-enabled/
+          sudo rm -f /etc/nginx/sites-enabled/default
+          sudo nginx -t  # Test the Nginx config
 
-            sudo nginx -t  # Test the Nginx config
-            sudo systemctl restart nginx
+          # Reload systemd and restart services
+          sudo systemctl daemon-reload
+          sudo systemctl enable fastapi
+          sudo systemctl restart fastapi
+          sudo systemctl restart nginx
 
-            # Verify services
-            sudo systemctl status fastapi --no-pager
-            sudo systemctl status nginx --no-pager
+          # Wait for services to start and verify
+          sleep 5
+          sudo systemctl status fastapi --no-pager
+          sudo systemctl status nginx --no-pager
           EOF
